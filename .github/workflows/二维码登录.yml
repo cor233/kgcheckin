@@ -31,12 +31,14 @@ jobs:
     steps:
       - name: 检出仓库
         uses: actions/checkout@v6
+
       - name: 创建 Node 环境
         uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: 'npm'
           cache-dependency-path: ./api/package-lock.json
+
       - name: 检查 GitHub CLI
         run: |
           if ! command -v gh >/dev/null 2>&1; then
@@ -47,6 +49,7 @@ jobs:
             sudo apt install gh -y
           fi
           gh --version
+
       - name: 缓存依赖
         id: cache-npm
         uses: actions/cache@v5
@@ -55,12 +58,15 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('./api/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
+
       - name: 安装依赖
         run: npm run install
         if: ${{ steps.cache-npm.outputs.cache-hit != 'true' }}
 
-      # ═══ 步骤一：生成二维码图片并写入 Summary（真实 PNG 图片，可直接扫描）════
-      - name: 生成登录二维码图片
+      # ════════════════════════════════════════════
+      #   步骤一：生成二维码 → PNG + Summary + HTML 登录页
+      # ════════════════════════════════════════════
+      - name: 生成二维码图片与HTML登录页
         id: gen
         run: node qrcodeLogin.js gen
         env:
@@ -68,28 +74,43 @@ jobs:
           USERINFO: ${{ secrets.USERINFO }}
           APPEND_USER: ${{ github.event.inputs.append_user }}
 
-      # ═══ 步骤二：立即上传二维码图片（生成成功后立即可下载，不用等整个 run 结束）════
-      - name: 上传二维码图片（立即可下载）
+      # ════════════════════════════════════════════
+      #   步骤二：立即上传 HTML 登录页 ← 用户下载后浏览器打开直接扫码！
+      # ════════════════════════════════════════════
+      - name: 上传二维码 HTML 页面（👈 下载这个！浏览器打开即可扫码）
+        if: ${{ success() && steps.gen.outcome == 'success' && hashFiles('qr/login.html') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: 二维码HTML
+          path: |
+            qr/login.html
+            qr/qr-*.html
+          retention-days: 1
+          if-no-files-found: warn
+
+      # ═══ 备用：单独的 PNG 图片 artifact ═══
+      - name: 上传二维码 PNG 图片
         if: ${{ success() && steps.gen.outcome == 'success' && hashFiles('qr/*.png') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: 二维码图片
+          name: 二维码PNG
           path: qr/*.png
           retention-days: 1
 
-      # ═══ 错误处理：生成失败时给出明确提示 ═══
+      # ═══ 错误处理 ═══
       - name: 二维码生成失败提示
         if: ${{ failure() && steps.gen.outcome == 'failure' }}
         run: |
-          echo "::error::❌ 二维码生成失败，无法继续登录。"
+          echo "::error::❌ 二维码生成失败"
           echo ""
-          echo "请检查以下可能的原因："
-          echo "  1️⃣ 运行器网络是否能正常访问酷狗接口"
-          echo "  2️⃣ npm 依赖是否安装成功（查看上方「安装依赖」步骤的输出）"
+          echo "排查方向："
+          echo "  1️⃣ 运行器网络是否能访问酷狗接口（查看上方步骤日志）"
+          echo "  2️⃣ npm 依赖安装是否成功"
 
-      # ═══ 步骤三：轮询等待用户扫码确认（用户在 Summary 页扫完图后自动检测）════
+      # ════════════════════════════════════════════
+      #   步骤三：轮询等待用户扫码确认
+      # ════════════════════════════════════════════
       - name: 等待扫码登录
-        id: wait
         if: ${{ success() && steps.gen.outcome == 'success' }}
         run: node qrcodeLogin.js wait
         env:
@@ -99,11 +120,11 @@ jobs:
           PAT: ${{ secrets.PAT }}
           GITHUB_REPOSITORY: ${{ github.repository }}
 
-      # ═══ 最终兜底上传（确保即使前面步骤失败也能拿到已生成的文件）════
-      - name: 上传所有生成的文件（兜底）
+      # ═══ 兜底：确保所有生成的文件都被保留 ═══
+      - name: 上传全部文件（兜底）
         if: ${{ always() && hashFiles('qr/*') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: 二维码全部文件
+          name: 二维码全部文件_兜底
           path: qr/
           retention-days: 1
